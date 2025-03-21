@@ -7,6 +7,7 @@
 このモジュールは画像処理確認アプリで使用される画像処理機能を提供します。
 """
 
+import streamlit as st
 import os
 import cv2
 import numpy as np
@@ -14,6 +15,9 @@ from PIL import Image, ImageEnhance, ImageFilter
 import scipy.ndimage as ndi
 from skimage import feature, filters, segmentation, morphology, measure
 import matplotlib.pyplot as plt
+
+# タイトル
+st.title("画像処理確認アプリ")
 
 
 class ImageProcessor:
@@ -174,7 +178,11 @@ class ImageProcessor:
         if self.library == "opencv":
             return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         elif self.library == "pillow":
-            return image.convert('L')
+            try:
+                image = cv2.cvtColor(np.array(image), cv2.COLOR_BGR2RGB)
+            except:
+                pass
+            return Image.fromarray(image).convert('L')
         else:
             return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
@@ -190,7 +198,12 @@ class ImageProcessor:
         if self.library == "opencv":
             return cv2.bitwise_not(image)
         elif self.library == "pillow":
-            return Image.eval(image, lambda x: 255 - x)
+            try:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            except:
+                pass
+            img = Image.fromarray(image)
+            return Image.eval(img, lambda x: 255 - x)
         else:
             return cv2.bitwise_not(image)
         
@@ -210,7 +223,12 @@ class ImageProcessor:
             rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
             return cv2.warpAffine(image, rotation_matrix, (width, height))
         elif self.library == "pillow":
-            return image.rotate(angle)
+            try:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            except:
+                pass
+            img = Image.fromarray(image)
+            return img.rotate(angle)
         else:
             height, width = image.shape[:2]
             center = (width // 2, height // 2)
@@ -231,7 +249,8 @@ class ImageProcessor:
         if self.library == "opencv":
             return cv2.resize(image, (width, height))
         elif self.library == "pillow":
-            return image.resize((width, height))
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            return img.resize((width, height))
         else:
             return cv2.resize(image, (width, height))
         
@@ -259,15 +278,16 @@ class ImageProcessor:
             else:
                 return cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
         elif self.library == "pillow":
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             # PillowではImageFilterを使用
             if blur_type == "gaussian":
-                return image.filter(ImageFilter.GaussianBlur(radius=kernel_size))
+                return img.filter(ImageFilter.GaussianBlur(radius=kernel_size))
             elif blur_type == "median":
-                return image.filter(ImageFilter.MedianFilter(size=kernel_size))
+                return img.filter(ImageFilter.MedianFilter(size=kernel_size))
             elif blur_type == "box":
-                return image.filter(ImageFilter.BoxBlur(radius=kernel_size))
+                return img.filter(ImageFilter.BoxBlur(radius=kernel_size))
             else:
-                return image.filter(ImageFilter.GaussianBlur(radius=kernel_size))
+                return img.filter(ImageFilter.GaussianBlur(radius=kernel_size))
         else:
             if blur_type == "gaussian":
                 return cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
@@ -292,7 +312,8 @@ class ImageProcessor:
         if self.library == "opencv":
             return cv2.flip(image, 1)  # 1は水平方向の反転
         elif self.library == "pillow":
-            return image.transpose(Image.FLIP_LEFT_RIGHT)
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            return img.transpose(Image.FLIP_LEFT_RIGHT)
         else:
             return cv2.flip(image, 1)
             
@@ -308,7 +329,8 @@ class ImageProcessor:
         if self.library == "opencv":
             return cv2.flip(image, 0)
         elif self.library == "pillow":
-            return image.transpose(Image.FLIP_TOP_BOTTOM)
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            return img.transpose(Image.FLIP_TOP_BOTTOM)
         else:
             return cv2.flip(image, 0)
         
@@ -326,6 +348,7 @@ class ImageProcessor:
             return cv2.filter2D(image, -1, kernel)
         elif self.library == "pillow":
             enhancer = ImageEnhance.Sharpness(image)
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             return enhancer.enhance(2.0)
         else:
             kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
@@ -363,7 +386,8 @@ class ImageProcessor:
                     gray = image
                 return cv2.Laplacian(gray, cv2.CV_64F)
         elif self.library == "pillow":
-            return image.filter(ImageFilter.FIND_EDGES)
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            return img.filter(ImageFilter.FIND_EDGES)
         else:
             if method == "canny":
                 if len(image.shape) == 3:
@@ -406,6 +430,7 @@ class ImageProcessor:
             return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         elif self.library == "pillow":
             enhancer = ImageEnhance.Brightness(image)
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             return enhancer.enhance(value)
         else:
             hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -431,6 +456,7 @@ class ImageProcessor:
             return cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
         elif self.library == "pillow":
             enhancer = ImageEnhance.Contrast(image)
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             return enhancer.enhance(value)
         else:
             alpha = value  # コントラスト制御（1.0-3.0）
@@ -456,6 +482,7 @@ class ImageProcessor:
             return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         elif self.library == "pillow":
             enhancer = ImageEnhance.Color(image)
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             return enhancer.enhance(value)
         else:
             hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -485,7 +512,8 @@ class ImageProcessor:
             return sepia_img
         elif self.library == "pillow":
             # Pillowでのセピア実装
-            return image.convert('L').convert('RGB')
+            img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            return img.convert('L').convert('RGB')
         else:
             # セピアカラーマトリックス
             sepia_kernel = np.array([[0.272, 0.534, 0.131],
@@ -506,11 +534,3 @@ class ImageProcessor:
         """
         if self.library == "opencv":
             kernel = np.array([[-2, -1, 0],
-    def closing(self, image, kernel_size):
-        """クロージング処理。"""
-        if self.library == "opencv":
-            kernel = np.ones((kernel_size, kernel_size), np.uint8)
-            closing_img = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
-            return closing_img
-        else:
-            return image
