@@ -51,58 +51,110 @@ def show_image_display(images, current_image_index, history, selected_history_in
     Returns:
         (prev_button, next_button, use_processed_button, restore_original_button): 各種ボタンがクリックされたかどうか
     """
-    col1, col2 = st.columns(2)
     prev_button = False
     next_button = False
     use_processed_button = False
     restore_original_button = False
     
-    # 元画像表示
-    if len(images) > 0:
-        with col1:
-            st.subheader("元画像")
-            current_image = images[current_image_index]
-            st.image(convert_to_pil(current_image), use_container_width=True)
-            
-            # 画像ナビゲーションボタン
-            nav_col1, nav_col2 = st.columns(2)
-            with nav_col1:
-                prev_button = st.button("前の画像")
-            with nav_col2:
-                next_button = st.button("次の画像")
-                
-            # オリジナルに戻るボタン
-            if 'original_images' in st.session_state and len(st.session_state.original_images) > 0:
-                restore_original_button = st.button("オリジナル画像に戻す")
+    # 画像が読み込まれていない場合
+    if len(images) == 0:
+        st.info("フォルダを選択して画像を読み込んでください。")
+        return prev_button, next_button, use_processed_button, restore_original_button
+    
+    # 元画像（オリジナル）
+    original_image = None
+    if 'original_images' in st.session_state and len(st.session_state.original_images) > current_image_index:
+        original_image = st.session_state.original_images[current_image_index]
     else:
-        with col1:
-            st.info("フォルダを選択して画像を読み込んでください。")
+        original_image = images[current_image_index]
+    
+    # 現在の画像（処理前）
+    current_image = images[current_image_index]
+    
+    # 処理後画像
+    processed_image = None
+    if len(history) > 0:
+        # 選択された履歴エントリがある場合はそれを表示、なければ最新の履歴エントリを表示
+        history_index = selected_history_index if selected_history_index is not None else len(history) - 1
+        history_entry = history[history_index]
         
-    # 処理後画像表示
-    with col2:
-        st.subheader("処理後画像")
-        if len(history) > 0:
-            # 選択された履歴エントリがある場合はそれを表示、なければ最新の履歴エントリを表示
-            history_index = selected_history_index if selected_history_index is not None else len(history) - 1
-            history_entry = history[history_index]
+        # 一時的な処理結果がある場合はそれを使用（画像ナビゲーション時）
+        if 'temp_processed_image' in st.session_state and st.session_state.temp_processed_image is not None:
+            processed_image = st.session_state.temp_processed_image
+        else:
             processed_image = history_entry["processed_image"]
-            st.image(convert_to_pil(processed_image), use_container_width=True)
-            
-            # 元画像と処理後画像のインデックスが一致しているかチェック
-            if "image_index" in history_entry and history_entry["image_index"] != current_image_index:
-                st.warning("⚠️ 注意: 現在表示されている元画像と処理後画像は異なる画像です")
-                
+        
+        # 元画像と処理後画像のインデックスが一致しているかチェック
+        if "image_index" in history_entry and history_entry["image_index"] != current_image_index:
+            st.warning("⚠️ 注意: 現在表示されている元画像と処理後画像は異なる画像です")
+    else:
+        # 履歴がない場合は処理前画像をそのまま表示
+        processed_image = current_image
+    
+    # 3カラムレイアウトで表示
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.subheader("元画像（オリジナル）")
+        st.image(convert_to_pil(original_image), use_container_width=True)
+    
+    with col2:
+        st.subheader("処理前画像")
+        st.image(convert_to_pil(current_image), use_container_width=True)
+    
+    with col3:
+        st.subheader("処理後画像")
+        st.image(convert_to_pil(processed_image), use_container_width=True)
+        
+        # 処理の情報表示
+        if len(history) > 0 and selected_history_index is not None:
+            history_entry = history[selected_history_index]
             # 処理タイプとパラメータを表示
             st.info(f"処理: {history_entry['process_type']} - パラメータ: {history_entry['params']}")
-            
-            # 処理後画像を元画像として使用するボタン
-            use_processed_button = st.button("この処理結果を元画像として使用")
             
             # 処理の連鎖情報を表示（あれば）
             if "chain_info" in history_entry and history_entry["chain_info"]:
                 st.success(f"処理連鎖: {history_entry['chain_info']}")
-        else:
-            st.info("処理を適用するか、履歴から選択してください。")
+    
+    # 画像ナビゲーションボタン
+    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
+    with nav_col1:
+        prev_button = st.button("前の画像")
+    with nav_col2:
+        next_button = st.button("次の画像")
+    with nav_col3:
+        # 処理後画像を元画像として使用するボタン
+        if len(history) > 0:
+            use_processed_button = st.button("処理後画像を元画像として使用")
+    with nav_col4:
+        # オリジナルに戻るボタン
+        if 'original_images' in st.session_state and len(st.session_state.original_images) > 0:
+            restore_original_button = st.button("オリジナル画像に戻す")
+    
+    # ビューモードスイッチ
+    st.radio("表示モード", ["3画像表示", "差分表示"], key="view_mode", horizontal=True)
+    
+    # 差分表示モード
+    if st.session_state.get("view_mode") == "差分表示" and processed_image is not None:
+        st.subheader("処理前後の差分")
+        try:
+            # 画像サイズが同じ場合のみ差分を計算
+            if current_image.shape == processed_image.shape:
+                # 差分の計算
+                diff = cv2.absdiff(current_image, processed_image)
+                
+                # 差分を増幅してわかりやすく
+                diff_amplified = cv2.convertScaleAbs(diff, alpha=5.0)
+                
+                # ヒートマップカラーマップを適用
+                diff_color = cv2.applyColorMap(diff_amplified, cv2.COLORMAP_JET)
+                
+                # 差分画像を表示
+                st.image(convert_to_pil(diff_color), use_container_width=True, caption="差分（強調表示）")
+            else:
+                st.warning("処理前後の画像サイズが異なるため、差分表示できません")
+        except Exception as e:
+            st.error(f"差分表示でエラーが発生しました: {str(e)}")
     
     return prev_button, next_button, use_processed_button, restore_original_button
 

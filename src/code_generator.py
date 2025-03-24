@@ -9,7 +9,8 @@
 
 import os
 import textwrap
-from typing import Dict, List, Any, Optional
+import streamlit as st
+from typing import Dict, List, Any, Optional, Tuple
 
 
 class CodeGenerator:
@@ -24,16 +25,41 @@ class CodeGenerator:
         self.library = library
         self.supported_libraries = ["opencv", "pillow", "scipy", "scikit-image", "numpy"]
         
+        # 処理タイプと必要な前提条件・警告のマッピング
+        self.process_prerequisites = {
+            # モルフォロジー系（2値化が前提）
+            "dilate": {"warning": "この処理は2値化画像に対して最も効果的です。先に2値化処理を適用することをお勧めします。", "prerequisite": "binary"},
+            "erode": {"warning": "この処理は2値化画像に対して最も効果的です。先に2値化処理を適用することをお勧めします。", "prerequisite": "binary"},
+            "opening": {"warning": "この処理は2値化画像に対して最も効果的です。先に2値化処理を適用することをお勧めします。", "prerequisite": "binary"},
+            "closing": {"warning": "この処理は2値化画像に対して最も効果的です。先に2値化処理を適用することをお勧めします。", "prerequisite": "binary"},
+            "tophat": {"warning": "この処理は2値化画像に対して最も効果的です。先に2値化処理を適用することをお勧めします。", "prerequisite": "binary"},
+            "blackhat": {"warning": "この処理は2値化画像に対して最も効果的です。先に2値化処理を適用することをお勧めします。", "prerequisite": "binary"},
+            "morphology_gradient": {"warning": "この処理は2値化画像に対して最も効果的です。先に2値化処理を適用することをお勧めします。", "prerequisite": "binary"},
+            
+            # 特徴検出系（グレースケールが前提、または推奨）
+            "edge_detection": {"warning": "エッジ検出はグレースケール画像に対して最も効果的です。カラー画像の場合は自動的にグレースケール変換されます。", "prerequisite": "grayscale"},
+            "hough_lines": {"warning": "ハフ変換はエッジ検出後の2値画像に対して最も効果的です。先にエッジ検出を適用することをお勧めします。", "prerequisite": "edges"},
+            "probabilistic_hough_lines": {"warning": "確率的ハフ変換はエッジ検出後の2値画像に対して最も効果的です。先にエッジ検出を適用することをお勧めします。", "prerequisite": "edges"},
+            "hough_circles": {"warning": "円検出はグレースケール画像に対して最も効果的です。カラー画像の場合は自動的にグレースケール変換されます。", "prerequisite": "grayscale"},
+            "contour_detection": {"warning": "輪郭検出は2値化画像に対して最も効果的です。先に2値化処理を適用することをお勧めします。", "prerequisite": "binary"},
+            
+            # その他の特殊処理
+            "histogram_equalization": {"warning": "ヒストグラム均等化はグレースケール画像に対して最も効果的です。カラー画像の場合は色空間を変換してから適用することをお勧めします。", "prerequisite": "grayscale"},
+            "watershed": {"warning": "分水嶺法は正確なマーカーが必要です。マーカー作成のためにグレースケール変換や2値化などの前処理をお勧めします。", "prerequisite": "markers"},
+            "template_matching": {"warning": "テンプレートマッチングはテンプレート画像と同じチャネル数の画像に対してのみ適用可能です。", "prerequisite": "same_channels"}
+        }
+        
         if library not in self.supported_libraries:
             raise ValueError(f"サポートされていないライブラリです: {library}")
         
-    def generate_code(self, process_type, params=None, history=None):
+    def generate_code(self, process_type, params=None, history=None, folder_processing=False):
         """処理に対応するPythonコードを生成する。
 
         Args:
             process_type: 処理の種類
             params: 処理のパラメータ
             history: 処理履歴（複数の処理を組み合わせる場合）
+            folder_processing: フォルダ内の画像を一括処理するかどうか
 
         Returns:
             生成されたPythonコード
@@ -45,7 +71,10 @@ class CodeGenerator:
         imports = self.get_library_imports()
         
         # 処理タイプに応じたコードを生成
-        if history:
+        if folder_processing:
+            # フォルダ内の画像を一括処理するコードを生成
+            process_code = self._generate_folder_processing_code(process_type, params, history)
+        elif history:
             # 履歴から複数の処理を組み合わせたコードを生成
             process_code = self._generate_code_from_history(history)
         else:
@@ -56,6 +85,17 @@ class CodeGenerator:
         code = f"{imports}\n\n{process_code}"
         
         return self.format_code(code)
+        
+    def get_process_prerequisites(self, process_type):
+        """処理タイプに対する前提条件と警告を取得する。
+
+        Args:
+            process_type: 処理の種類
+
+        Returns:
+            前提条件と警告のディクショナリ、該当なしの場合はNone
+        """
+        return self.process_prerequisites.get(process_type)
         
     def generate_comparison_code(self, image1_path, image2_path, metrics=None):
         """画像比較のコードを生成する。
@@ -121,6 +161,113 @@ class CodeGenerator:
         code = f"{imports}\n\n{load_code}\n{comparison_code}\n{visualization_code}"
         
         return self.format_code(code)
+
+    def _generate_folder_processing_code(self, process_type, params, history=None):
+        """フォルダ内の画像を一括処理するコードを生成する。
+
+        Args:
+            process_type: 処理の種類
+            params: 処理のパラメータ
+            history: 処理履歴（複数の処理を組み合わせる場合）
+
+        Returns:
+            生成されたコード
+        """
+        code = "import os\nimport glob\nimport matplotlib.pyplot as plt\nimport time\n\n"
+        
+        # 入力・出力フォルダ設定
+        code += "# 入力・出力フォルダ設定\n"
+        code += "input_folder = 'path/to/input/folder'  # 入力フォルダのパスを指定\n"
+        code += "output_folder = 'path/to/output/folder'  # 出力フォルダのパスを指定\n\n"
+        
+        # 出力フォルダが存在しない場合は作成
+        code += "# 出力フォルダが存在しない場合は作成\n"
+        code += "if not os.path.exists(output_folder):\n"
+        code += "    os.makedirs(output_folder)\n\n"
+        
+        # 画像ファイル一覧を取得
+        code += "# 画像ファイル一覧を取得\n"
+        code += "image_files = glob.glob(os.path.join(input_folder, '*.jpg')) + \\\n"
+        code += "             glob.glob(os.path.join(input_folder, '*.jpeg')) + \\\n"
+        code += "             glob.glob(os.path.join(input_folder, '*.png')) + \\\n"
+        code += "             glob.glob(os.path.join(input_folder, '*.bmp'))\n\n"
+        
+        # 処理の前提条件をチェック
+        prereq = self.get_process_prerequisites(process_type)
+        if prereq:
+            code += f"# 注意: {prereq['warning']}\n\n"
+        
+        # 処理関数を定義
+        code += "# 処理関数を定義\n"
+        code += "def process_image(image):\n"
+        
+        # 履歴があれば複数の処理を適用
+        if history:
+            for i, entry in enumerate(history):
+                entry_process_type = entry.get("process_type", "grayscale")
+                entry_params = entry.get("params", {})
+                
+                indented_code = "    " + self._generate_process_code(entry_process_type, entry_params, "image" if i == 0 else "result").replace("\n", "\n    ")
+                
+                if i == 0:
+                    code += f"    result = {indented_code}\n"
+                else:
+                    code += f"    result = {indented_code}\n"
+        else:
+            # 単一の処理を適用
+            indented_code = "    " + self._generate_process_code(process_type, params, "image").replace("\n", "\n    ")
+            code += f"    result = {indented_code}\n"
+        
+        code += "    return result\n\n"
+        
+        # 画像処理ループ
+        code += "# フォルダ内の画像を一括処理\n"
+        code += "print(f\"処理対象画像: {len(image_files)}個\")\n"
+        code += "start_time = time.time()\n\n"
+        code += "for i, image_file in enumerate(image_files):\n"
+        code += "    # 画像を読み込み\n"
+        code += "    image = cv2.imread(image_file)\n"
+        code += "    if image is None:\n"
+        code += "        print(f\"画像の読み込みに失敗しました: {image_file}\")\n"
+        code += "        continue\n\n"
+        code += "    # 画像を処理\n"
+        code += "    result = process_image(image)\n\n"
+        code += "    # 出力ファイル名を設定\n"
+        code += "    filename = os.path.basename(image_file)\n"
+        code += "    output_path = os.path.join(output_folder, filename)\n\n"
+        code += "    # 結果を保存\n"
+        code += "    cv2.imwrite(output_path, result)\n"
+        code += "    print(f\"処理完了 ({i+1}/{len(image_files)}): {filename}\")\n\n"
+        
+        # 処理時間の表示
+        code += "# 処理完了\n"
+        code += "elapsed_time = time.time() - start_time\n"
+        code += "print(f\"全ての処理が完了しました。処理時間: {elapsed_time:.2f}秒\")\n\n"
+        
+        # 結果のプレビュー
+        code += "# 結果のプレビュー（最初の4枚）\n"
+        code += "preview_files = image_files[:4]\n"
+        code += "if preview_files:\n"
+        code += "    plt.figure(figsize=(15, 10))\n"
+        code += "    for i, image_file in enumerate(preview_files):\n"
+        code += "        # 元画像\n"
+        code += "        plt.subplot(2, len(preview_files), i + 1)\n"
+        code += "        input_img = cv2.imread(image_file)\n"
+        code += "        plt.imshow(cv2.cvtColor(input_img, cv2.COLOR_BGR2RGB))\n"
+        code += "        plt.title(f\"元画像 {i+1}\")\n"
+        code += "        plt.axis('off')\n\n"
+        code += "        # 処理後画像\n"
+        code += "        plt.subplot(2, len(preview_files), i + 1 + len(preview_files))\n"
+        code += "        filename = os.path.basename(image_file)\n"
+        code += "        output_path = os.path.join(output_folder, filename)\n"
+        code += "        output_img = cv2.imread(output_path)\n"
+        code += "        plt.imshow(cv2.cvtColor(output_img, cv2.COLOR_BGR2RGB))\n"
+        code += "        plt.title(f\"処理後 {i+1}\")\n"
+        code += "        plt.axis('off')\n\n"
+        code += "    plt.tight_layout()\n"
+        code += "    plt.show()\n"
+        
+        return code
         
     def generate_template_matching_code(self, image_path, template_path, method="cv.TM_CCOEFF_NORMED"):
         """テンプレートマッチングのコードを生成する。
@@ -282,10 +429,19 @@ class CodeGenerator:
             生成されたコード
         """
         code = "# 画像を読み込む\n"
-        code += self._generate_load_code(history[0].image_path, "image")
+        code += "image_path = 'path/to/your/image.jpg'  # 画像ファイルのパスを指定\n"
+        code += self._generate_load_code("image_path", "image")
         code += "\n# 処理を適用\n"
         
         for i, entry in enumerate(history):
+            process_type = entry.get("process_type", "grayscale")
+            params = entry.get("params", {})
+            
+            # 処理の前提条件をチェック
+            prereq = self.get_process_prerequisites(process_type)
+            if prereq:
+                code += f"# 注意: {prereq['warning']}\n"
+            
             if i == 0:
                 var_name = "result"
                 code += f"{var_name} = "
@@ -293,21 +449,51 @@ class CodeGenerator:
                 var_name = f"result{i+1}"
                 code += f"{var_name} = "
                 
-            code += self._generate_process_code(entry.process_type, entry.params, f"result{i}" if i > 0 else "image")
+            code += self._generate_process_code(process_type, params, f"result{i}" if i > 0 else "image")
             code += "\n"
             
         code += "\n# 結果を表示\n"
-        code += "plt.figure(figsize=(12, 6))\n\n"
-        code += "plt.subplot(1, 2, 1)\n"
-        code += "plt.title('Original')\n"
+        code += "import matplotlib.pyplot as plt\n\n"
+        code += "plt.figure(figsize=(15, 5))\n\n"
+        code += "plt.subplot(1, 3, 1)\n"
+        code += "plt.title('元画像')\n"
         code += "plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))\n"
         code += "plt.axis('off')\n\n"
-        code += "plt.subplot(1, 2, 2)\n"
-        code += "plt.title('Processed')\n"
-        code += f"plt.imshow(cv2.cvtColor({var_name}, cv2.COLOR_BGR2RGB))\n"
-        code += "plt.axis('off')\n\n"
+        
+        # 中間結果を表示（履歴が3つ以上ある場合）
+        if len(history) >= 3:
+            middle_idx = len(history) // 2
+            middle_var = f"result{middle_idx}" if middle_idx > 0 else "result"
+            code += f"plt.subplot(1, 3, 2)\n"
+            code += f"plt.title('中間処理（{history[middle_idx].get('process_type', 'grayscale')}）')\n"
+            code += f"plt.imshow(cv2.cvtColor({middle_var}, cv2.COLOR_BGR2RGB))\n"
+            code += f"plt.axis('off')\n\n"
+            
+            code += f"plt.subplot(1, 3, 3)\n"
+            code += f"plt.title('最終結果')\n"
+            code += f"plt.imshow(cv2.cvtColor({var_name}, cv2.COLOR_BGR2RGB))\n"
+            code += f"plt.axis('off')\n\n"
+        else:
+            code += f"plt.subplot(1, 3, 2)\n"
+            code += f"plt.title('処理後画像')\n"
+            code += f"plt.imshow(cv2.cvtColor({var_name}, cv2.COLOR_BGR2RGB))\n"
+            code += f"plt.axis('off')\n\n"
+            
+            # 差分を表示
+            code += f"plt.subplot(1, 3, 3)\n"
+            code += f"plt.title('差分（元画像 - 処理後）')\n"
+            code += f"diff = cv2.absdiff(image, {var_name})\n"
+            code += f"plt.imshow(cv2.applyColorMap(cv2.convertScaleAbs(diff, alpha=5), cv2.COLORMAP_JET))\n"
+            code += f"plt.axis('off')\n\n"
+            
         code += "plt.tight_layout()\n"
         code += "plt.show()\n"
+        
+        # 結果の保存
+        code += "\n# 結果を保存\n"
+        code += "output_path = 'path/to/output/image.jpg'  # 出力パスを指定\n"
+        code += f"cv2.imwrite(output_path, {var_name})\n"
+        code += "print(f\"処理結果を保存しました: {output_path}\")\n"
         
         return code
         
@@ -325,22 +511,90 @@ class CodeGenerator:
         code += "image_path = 'path/to/your/image.jpg'  # 画像ファイルのパスを指定\n"
         code += self._generate_load_code("image_path", "image")
         
-        code += "\n# 処理を適用\n"
-        code += "result = " + self._generate_process_code(process_type, params, "image")
+        # 処理の前提条件をチェック
+        prereq = self.get_process_prerequisites(process_type)
+        if prereq:
+            code += f"\n# 注意: {prereq['warning']}\n"
+            
+            # 前提条件に応じた前処理コードを追加
+            if prereq["prerequisite"] == "grayscale":
+                code += "\n# グレースケール変換（推奨前処理）\n"
+                code += "if len(image.shape) == 3:\n"
+                code += "    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)\n"
+                code += "    # 3チャンネルに戻す（表示用）\n"
+                code += "    image_to_process = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)\n"
+                code += "else:\n"
+                code += "    image_to_process = image.copy()\n"
+            elif prereq["prerequisite"] == "binary":
+                code += "\n# 2値化処理（推奨前処理）\n"
+                code += "if len(image.shape) == 3:\n"
+                code += "    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)\n"
+                code += "else:\n"
+                code += "    gray = image.copy()\n"
+                code += "_, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)\n"
+                code += "# 3チャンネルに戻す（表示用）\n"
+                code += "image_to_process = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)\n"
+            elif prereq["prerequisite"] == "edges":
+                code += "\n# エッジ検出（推奨前処理）\n"
+                code += "if len(image.shape) == 3:\n"
+                code += "    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)\n"
+                code += "else:\n"
+                code += "    gray = image.copy()\n"
+                code += "edges = cv2.Canny(gray, 100, 200)\n"
+                code += "# 3チャンネルに戻す（表示用）\n"
+                code += "image_to_process = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)\n"
+            else:
+                code += "\n# 処理用画像を準備\n"
+                code += "image_to_process = image.copy()\n"
+        else:
+            code += "\n# 処理用画像を準備\n"
+            code += "image_to_process = image.copy()\n"
         
-        code += "\n# 結果を表示\n"
+        code += "\n# 処理を適用\n"
+        if prereq and prereq["prerequisite"] in ["grayscale", "binary", "edges"]:
+            code += "result = " + self._generate_process_code(process_type, params, "image_to_process")
+        else:
+            code += "result = " + self._generate_process_code(process_type, params, "image")
+        
+        code += "\n\n# 結果を表示\n"
         code += "import matplotlib.pyplot as plt\n\n"
-        code += "plt.figure(figsize=(12, 6))\n\n"
-        code += "plt.subplot(1, 2, 1)\n"
-        code += "plt.title('Original')\n"
+        code += "plt.figure(figsize=(15, 5))\n\n"
+        code += "plt.subplot(1, 3, 1)\n"
+        code += "plt.title('元画像')\n"
         code += "plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))\n"
         code += "plt.axis('off')\n\n"
-        code += "plt.subplot(1, 2, 2)\n"
-        code += "plt.title('Processed')\n"
-        code += "plt.imshow(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))\n"
-        code += "plt.axis('off')\n\n"
+        
+        if prereq and prereq["prerequisite"] in ["grayscale", "binary", "edges"]:
+            code += "plt.subplot(1, 3, 2)\n"
+            code += f"plt.title('前処理画像 ({prereq['prerequisite']})')\n"
+            code += "plt.imshow(cv2.cvtColor(image_to_process, cv2.COLOR_BGR2RGB))\n"
+            code += "plt.axis('off')\n\n"
+            
+            code += "plt.subplot(1, 3, 3)\n"
+            code += "plt.title('処理後画像')\n"
+            code += "plt.imshow(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))\n"
+            code += "plt.axis('off')\n\n"
+        else:
+            code += "plt.subplot(1, 3, 2)\n"
+            code += "plt.title('処理後画像')\n"
+            code += "plt.imshow(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))\n"
+            code += "plt.axis('off')\n\n"
+            
+            # 差分を表示
+            code += "plt.subplot(1, 3, 3)\n"
+            code += "plt.title('差分（元画像 - 処理後）')\n"
+            code += "diff = cv2.absdiff(image, result)\n"
+            code += "plt.imshow(cv2.applyColorMap(cv2.convertScaleAbs(diff, alpha=5), cv2.COLORMAP_JET))\n"
+            code += "plt.axis('off')\n\n"
+            
         code += "plt.tight_layout()\n"
         code += "plt.show()\n"
+        
+        # 結果の保存
+        code += "\n# 結果を保存\n"
+        code += "output_path = 'path/to/output/image.jpg'  # 出力パスを指定\n"
+        code += "cv2.imwrite(output_path, result)\n"
+        code += "print(f\"処理結果を保存しました: {output_path}\")\n"
         
         return code
         
@@ -423,8 +677,8 @@ class CodeGenerator:
                 )({input_var}, {angle})"""
                 
         elif process_type == "resize":
-            width = params.get("width", "image.shape[1] // 2")
-            height = params.get("height", "image.shape[0] // 2")
+            width = params.get("width", 300)
+            height = params.get("height", 300)
             if self.library == "opencv":
                 return f"cv2.resize({input_var}, ({width}, {height}))"
             elif self.library == "pillow":
@@ -434,10 +688,32 @@ class CodeGenerator:
                 
         elif process_type == "blur":
             kernel_size = params.get("kernel_size", 5)
-            if self.library == "opencv":
-                return f"cv2.GaussianBlur({input_var}, ({kernel_size}, {kernel_size}), 0)"
-            elif self.library == "pillow":
-                return f"{input_var}.filter(ImageFilter.GaussianBlur({kernel_size}))"
+            blur_type = params.get("blur_type", "gaussian")
+            
+            if blur_type == "gaussian":
+                if self.library == "opencv":
+                    return f"cv2.GaussianBlur({input_var}, ({kernel_size}, {kernel_size}), 0)"
+                elif self.library == "pillow":
+                    return f"{input_var}.filter(ImageFilter.GaussianBlur({kernel_size}))"
+                else:
+                    return f"cv2.GaussianBlur({input_var}, ({kernel_size}, {kernel_size}), 0)"
+            elif blur_type == "median":
+                if self.library == "opencv":
+                    return f"cv2.medianBlur({input_var}, {kernel_size})"
+                else:
+                    return f"cv2.medianBlur({input_var}, {kernel_size})"
+            elif blur_type == "box":
+                if self.library == "opencv":
+                    return f"cv2.blur({input_var}, ({kernel_size}, {kernel_size}))"
+                else:
+                    return f"cv2.blur({input_var}, ({kernel_size}, {kernel_size}))"
+            elif blur_type == "bilateral":
+                sigma_color = params.get("sigma_color", 75)
+                sigma_space = params.get("sigma_space", 75)
+                if self.library == "opencv":
+                    return f"cv2.bilateralFilter({input_var}, {kernel_size}, {sigma_color}, {sigma_space})"
+                else:
+                    return f"cv2.bilateralFilter({input_var}, {kernel_size}, {sigma_color}, {sigma_space})"
             else:
                 return f"cv2.GaussianBlur({input_var}, ({kernel_size}, {kernel_size}), 0)"
                 
@@ -487,9 +763,123 @@ class CodeGenerator:
                     )(cv2.cvtColor({input_var}, cv2.COLOR_BGR2GRAY) if len({input_var}.shape) == 3 else {input_var})"""
                 else:
                     return f"cv2.Laplacian(cv2.cvtColor({input_var}, cv2.COLOR_BGR2GRAY) if len({input_var}.shape) == 3 else {input_var}, cv2.CV_64F)"
-                    
+        
         # その他の処理タイプに対するコード生成...
         # 実際のアプリケーションでは、すべての処理タイプに対応するコードを生成する必要があります
         
         # デフォルトの場合は元の画像を返す
         return input_var
+
+
+class CodeGeneratorUI:
+    """コード生成機能を提供するUIクラス。"""
+    
+    def __init__(self):
+        """初期化メソッド。"""
+        self.code_generator = CodeGenerator()
+        
+    def render_ui(self, history, pyperclip_available=True) -> Tuple[bool, str]:
+        """コード生成UIを描画する。
+        
+        Args:
+            history: 処理履歴
+            pyperclip_available: PyperClipが利用可能かどうか
+            
+        Returns:
+            (generated_code_ready, generated_code): コード生成完了フラグとコード
+        """
+        st.sidebar.header("コード生成")
+        
+        # コード生成の出力形式
+        if history:
+            code_output_options = ["単一画像処理", "フォルダ一括処理"]
+            code_output_option = st.sidebar.radio(
+                "出力形式",
+                code_output_options,
+                index=0
+            )
+            folder_processing = (code_output_option == "フォルダ一括処理")
+            
+            # 処理範囲の選択
+            if len(history) > 1:
+                code_generation_options = ["選択中の処理のみ", "すべての処理履歴"]
+                code_generation_option = st.sidebar.radio(
+                    "処理範囲",
+                    code_generation_options,
+                    index=0
+                )
+                use_selected_only = (code_generation_option == "選択中の処理のみ")
+            else:
+                use_selected_only = True
+            
+            # コード生成ボタン
+            generate_code_button = st.sidebar.button("コードを生成")
+            
+            if generate_code_button:
+                try:
+                    # コード生成器を初期化（常にOpenCVを使用）
+                    self.code_generator = CodeGenerator(library="opencv")
+                    
+                    # コードを生成
+                    if use_selected_only and "selected_history_index" in st.session_state:
+                        if st.session_state.selected_history_index is not None:
+                            entry = history[st.session_state.selected_history_index]
+                            process_type = entry["process_type"]
+                            params = entry["params"]
+                            
+                            # 処理の前提条件をチェック
+                            prereq = self.code_generator.get_process_prerequisites(process_type)
+                            if prereq:
+                                st.sidebar.warning(f"注意: {prereq['warning']}")
+                                
+                            generated_code = self.code_generator.generate_code(
+                                process_type, 
+                                params, 
+                                None, 
+                                folder_processing
+                            )
+                            st.session_state.generated_code = generated_code
+                            st.sidebar.success("選択中の処理のコードを生成しました。")
+                            return True, generated_code
+                    else:
+                        # すべての履歴からコードを生成
+                        generated_code = self.code_generator.generate_code(
+                            None, 
+                            None, 
+                            history, 
+                            folder_processing
+                        )
+                        st.session_state.generated_code = generated_code
+                        st.sidebar.success("すべての処理履歴からコードを生成しました。")
+                        return True, generated_code
+                        
+                except Exception as e:
+                    st.sidebar.error(f"コード生成中にエラーが発生しました: {str(e)}")
+            
+            # コードをコピーするボタン
+            if "generated_code" in st.session_state and pyperclip_available:
+                if st.sidebar.button("コードをクリップボードにコピー"):
+                    try:
+                        import pyperclip
+                        pyperclip.copy(st.session_state.generated_code)
+                        st.sidebar.success("コードをクリップボードにコピーしました。")
+                    except Exception as e:
+                        st.sidebar.error(f"コピー中にエラーが発生しました: {str(e)}")
+                        
+            # コードを保存するボタン
+            if "generated_code" in st.session_state:
+                save_path = st.sidebar.text_input("保存先ファイルパス", "generated_code.py")
+                if st.sidebar.button("コードをファイルに保存"):
+                    try:
+                        self.code_generator.save_to_file(st.session_state.generated_code, save_path)
+                        st.sidebar.success(f"コードを {save_path} に保存しました。")
+                    except Exception as e:
+                        st.sidebar.error(f"保存中にエラーが発生しました: {str(e)}")
+        else:
+            st.sidebar.info("処理履歴がありません。処理を適用するとコードが生成できます。")
+            
+        # 生成されたコードを返す
+        if "generated_code" in st.session_state:
+            return True, st.session_state.generated_code
+        else:
+            return False, ""
